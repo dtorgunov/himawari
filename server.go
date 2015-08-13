@@ -7,7 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 )
+
+// A minute
+const defaultTimeout = 60
 
 type Request struct {
 	Filename string
@@ -21,11 +26,18 @@ type Response struct {
 	Filename string `json:"filename"`
 }
 
+type Pending struct {
+	sync.Mutex
+	responses []Response
+}
+
 // These configuration variables will be read from command line flags later
 var (
 	address   = "localhost:3030"
 	directory = "data"
 )
+
+var readyQueue Pending
 
 func writeError(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
@@ -64,9 +76,11 @@ func respond(w http.ResponseWriter, req Request) error {
 		return errors.New(fmt.Sprintf("File %s/%s already exists", directory, req.Filename))
 	}
 
-	// timeout not implemented yet
-	resp := Response{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: 0}
+	readyQueue.Lock()
+	resp := Response{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: defaultTimeout}
 	json.NewEncoder(w).Encode(resp)
+	readyQueue.responses = append(readyQueue.responses, resp)
+	readyQueue.Unlock()
 
 	return nil
 }
@@ -97,9 +111,38 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(204)
 }
 
+func requestHandler(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/" { // root request
+		transferRequestHandler(w, req)
+	} else {
+		http.NotFound(w, req)
+	}
+}
+
+func timeoutRequests() {
+	for {
+		readyQueue.Lock()
+		var newQueue []Response
+		for _, r := range readyQueue.responses {
+			if r.Timeout > 0 {
+				r.Timeout = r.Timeout - 10
+				newQueue = append(newQueue, r)
+			} else {
+				log.Printf("Request for %s timed out", r.Filename)
+			}
+		}
+		readyQueue.responses = newQueue
+		readyQueue.Unlock()
+		time.Sleep(10 * time.Second)
+	}
+}
+
 func main() {
 	fmt.Printf("%s => %s\n", address, directory)
-	http.HandleFunc("/", transferRequestHandler)
+
+	http.HandleFunc("/", requestHandler)
+
+	go timeoutRequests()
 
 	err := http.ListenAndServe(address, nil)
 	if err != nil {
