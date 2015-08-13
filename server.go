@@ -111,11 +111,42 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(204)
 }
 
+func removeRequest(r Response) {
+	// assumes readyQueue is Locked by the caller
+	var newQueue []Response
+	for _, r1 := range readyQueue.responses {
+		if r != r1 {
+			newQueue = append(newQueue, r1)
+		} else {
+			log.Printf("Removing %s from the queue", r.Filename)
+		}
+	}
+	readyQueue.responses = newQueue
+
+}
+
+func availableForUpload(filename string) (Response, error) {
+	readyQueue.Lock()
+	defer readyQueue.Unlock()
+	for _, r := range readyQueue.responses {
+		if r.Filename == filename {
+			removeRequest(r)
+			return r, nil
+		}
+	}
+	return Response{}, errors.New("Unapproved upload")
+}
+
 func requestHandler(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/" { // root request
 		transferRequestHandler(w, req)
 	} else {
-		http.NotFound(w, req)
+		filename := req.URL.Path[1:]
+		if r, err := availableForUpload(filename); err == nil {
+			log.Printf("You are able to upload %s!", r.Filename)
+		} else {
+			http.NotFound(w, req)
+		}
 	}
 }
 
