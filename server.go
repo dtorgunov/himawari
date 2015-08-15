@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -138,13 +139,54 @@ func availableForUpload(filename string) (Response, error) {
 	return Response{}, errors.New("Unapproved upload")
 }
 
+func handleUpload(w http.ResponseWriter, req *http.Request, expected Response) {
+	if req.Method != "PUT" {
+		w.Header().Add("Allow", "PUT")
+		w.WriteHeader(405)
+		return
+	}
+
+	if int64(expected.Length) != req.ContentLength {
+		writeError(w, 400, "The length of the content doesn't match the originally negotiated length")
+		log.Printf("Expected %v bytes, received %v bytes. Upload aborted.\n", expected.Length, req.ContentLength)
+		return
+	}
+
+	file, err := os.Create(fmt.Sprintf("%s/%s", directory, expected.Filename))
+	if err != nil {
+		log.Printf("Error creating file: %v\n", err)
+		writeError(w, 500, "Could not create resource")
+		return
+	}
+	defer file.Close()
+
+	var buf []byte
+	buf, err = ioutil.ReadAll(req.Body)
+	if err != nil {
+		log.Printf("Error when reading request body: %v\n", err)
+		writeError(w, 500, "Could not read the content")
+		return
+	}
+
+	_, err = file.Write(buf)
+	if err != nil {
+		log.Printf("Error when writing to file: %v\n", err)
+		writeError(w, 500, "Could not write file")
+		return
+	}
+
+	w.Header().Add("Location", expected.Url)
+	w.WriteHeader(201)
+	fmt.Fprintf(w, "%s", expected.Url)
+}
+
 func requestHandler(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/" { // root request
 		transferRequestHandler(w, req)
 	} else {
 		filename := req.URL.Path[1:]
 		if r, err := availableForUpload(filename); err == nil {
-			log.Printf("You are able to upload %s!", r.Filename)
+			handleUpload(w, req, r)
 		} else {
 			http.NotFound(w, req)
 		}
