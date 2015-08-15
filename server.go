@@ -24,6 +24,7 @@ type Response struct {
 	Url      string `json:"url"`
 	Timeout  int    `json:"timeout"`
 	Filename string `json:"filename"`
+	Length   int    `json:"-"`
 }
 
 type Pending struct {
@@ -77,7 +78,7 @@ func respond(w http.ResponseWriter, req Request) error {
 	}
 
 	readyQueue.Lock()
-	resp := Response{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: defaultTimeout}
+	resp := Response{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: defaultTimeout, Length: req.Length}
 	json.NewEncoder(w).Encode(resp)
 	readyQueue.responses = append(readyQueue.responses, resp)
 	readyQueue.Unlock()
