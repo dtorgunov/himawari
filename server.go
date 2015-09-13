@@ -1,3 +1,20 @@
+// himawari. A simple file upload handling server.
+// Copyright (C) 2015 Denis Torgunov
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+// Package himawari implements a basic Himawari server.
 package himawari
 
 import (
@@ -12,15 +29,21 @@ import (
 	"time"
 )
 
-// A minute
+// defaultTimeout is the amount of time (in seconds), that the server
+// will wait for a file upload after a request has been accepted.
 const defaultTimeout = 60
 
+// Request is a representation of a JSON request for upload sent by
+// the user.
 type Request struct {
 	Filename string
 	Mime     string
 	Length   int
 }
 
+// Response is the information needed to process a file upload based
+// on an accepted request.
+// It is also used to generate the JSON response to the user.
 type Response struct {
 	Url      string `json:"url"`
 	Timeout  int    `json:"timeout"`
@@ -28,16 +51,23 @@ type Response struct {
 	Length   int    `json:"-"`
 }
 
+// Pending is a wrapper around an array of Responses that have been
+// accepted, but haven't been uploaded nor timed out.
+// It should be locked when in use, as the timing out routine runs in
+// a separate thread.
 type Pending struct {
 	sync.Mutex
 	responses []Response
 }
 
+// writeError is a wrapper for reporting errors to the client.
+// code should be a valid HTTP Response Code.
 func writeError(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
 	fmt.Fprintf(w, "%s\r\n", message)
 }
 
+// exists tests whether a file with a given filename exists.
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	if err == nil {
@@ -49,6 +79,8 @@ func exists(path string) bool {
 	}
 }
 
+// respond is used to construct a response to a request, either to
+// accept it or to report an error.
 func respond(w http.ResponseWriter, req Request, address string, directory string, readyQueue *Pending) error {
 	if req.Filename == "" && req.Mime == "" {
 		writeError(w, 400, "Either a filename or MIME-type needs to be specified")
@@ -79,6 +111,8 @@ func respond(w http.ResponseWriter, req Request, address string, directory strin
 	return nil
 }
 
+// transferRequestHandler listens on the server root and accepts
+// requests for uploads/file transfers.
 func transferRequestHandler(w http.ResponseWriter, req *http.Request, address string, directory string, readyQueue *Pending) {
 	var r Request
 
@@ -105,6 +139,8 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request, address st
 	w.WriteHeader(204)
 }
 
+// removeRequest removes a given Response from a Pending queue. The
+// caller MUST lock the queue before calling this function.
 func removeRequest(r Response, readyQueue *Pending) {
 	// assumes readyQueue is Locked by the caller
 	var newQueue []Response
@@ -119,6 +155,9 @@ func removeRequest(r Response, readyQueue *Pending) {
 
 }
 
+// availableForUpload extracts a Response for a transfer of a given
+// filename from a Pending queue. Returns an error if a request for
+// such a transfer has not been accepted.
 func availableForUpload(filename string, readyQueue *Pending) (Response, error) {
 	readyQueue.Lock()
 	defer readyQueue.Unlock()
@@ -131,6 +170,8 @@ func availableForUpload(filename string, readyQueue *Pending) (Response, error) 
 	return Response{}, errors.New("Unapproved upload")
 }
 
+// handleUpload saves the PUT payload to the corresponding location,
+// given that the length of the file is as negotiated.
 func handleUpload(w http.ResponseWriter, req *http.Request, expected Response, directory string) {
 	if req.Method != "PUT" {
 		w.Header().Add("Allow", "PUT")
@@ -172,6 +213,8 @@ func handleUpload(w http.ResponseWriter, req *http.Request, expected Response, d
 	fmt.Fprintf(w, "%s", expected.Url)
 }
 
+// requestHandlerConstructor constructs a Handler, closing around the
+// address to listen on and a directory to save the uploads into.
 func requestHandlerConstructor(address string, directory string, readyQueue *Pending) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/" { // root request
@@ -187,6 +230,8 @@ func requestHandlerConstructor(address string, directory string, readyQueue *Pen
 	}
 }
 
+// timeoutRequests checks a Pending queue for any requests that are
+// past their timeout and removes them.
 func timeoutRequests(readyQueue *Pending) {
 	for {
 		readyQueue.Lock()
@@ -205,6 +250,9 @@ func timeoutRequests(readyQueue *Pending) {
 	}
 }
 
+// StartServer is the main entry point for this package. It starts the
+// server listening on the supplied address, and saving the uploaded
+// files into the specified directory.
 func StartServer(address string, datadir string) error {
 	var readyQueue Pending
 
