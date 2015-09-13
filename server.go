@@ -33,8 +33,6 @@ type Pending struct {
 	responses []Response
 }
 
-var readyQueue Pending
-
 func writeError(w http.ResponseWriter, code int, message string) {
 	w.WriteHeader(code)
 	fmt.Fprintf(w, "%s\r\n", message)
@@ -51,7 +49,7 @@ func exists(path string) bool {
 	}
 }
 
-func respond(w http.ResponseWriter, req Request, address string, directory string) error {
+func respond(w http.ResponseWriter, req Request, address string, directory string, readyQueue *Pending) error {
 	if req.Filename == "" && req.Mime == "" {
 		writeError(w, 400, "Either a filename or MIME-type needs to be specified")
 		return errors.New("Neither filename nor MIME-type supplied")
@@ -81,7 +79,7 @@ func respond(w http.ResponseWriter, req Request, address string, directory strin
 	return nil
 }
 
-func transferRequestHandler(w http.ResponseWriter, req *http.Request, address string, directory string) {
+func transferRequestHandler(w http.ResponseWriter, req *http.Request, address string, directory string, readyQueue *Pending) {
 	var r Request
 
 	// Need to handle OPTIONS properly
@@ -98,7 +96,7 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request, address st
 		return
 	}
 
-	err = respond(w, r, address, directory)
+	err = respond(w, r, address, directory, readyQueue)
 	if err != nil {
 		log.Println(err)
 	}
@@ -107,7 +105,7 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request, address st
 	w.WriteHeader(204)
 }
 
-func removeRequest(r Response) {
+func removeRequest(r Response, readyQueue *Pending) {
 	// assumes readyQueue is Locked by the caller
 	var newQueue []Response
 	for _, r1 := range readyQueue.responses {
@@ -121,12 +119,12 @@ func removeRequest(r Response) {
 
 }
 
-func availableForUpload(filename string) (Response, error) {
+func availableForUpload(filename string, readyQueue *Pending) (Response, error) {
 	readyQueue.Lock()
 	defer readyQueue.Unlock()
 	for _, r := range readyQueue.responses {
 		if r.Filename == filename {
-			removeRequest(r)
+			removeRequest(r, readyQueue)
 			return r, nil
 		}
 	}
@@ -174,13 +172,13 @@ func handleUpload(w http.ResponseWriter, req *http.Request, expected Response, d
 	fmt.Fprintf(w, "%s", expected.Url)
 }
 
-func requestHandlerConstructor(address string, directory string) func(http.ResponseWriter, *http.Request) {
+func requestHandlerConstructor(address string, directory string, readyQueue *Pending) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/" { // root request
-			transferRequestHandler(w, req, address, directory)
+			transferRequestHandler(w, req, address, directory, readyQueue)
 		} else {
 			filename := req.URL.Path[1:]
-			if r, err := availableForUpload(filename); err == nil {
+			if r, err := availableForUpload(filename, readyQueue); err == nil {
 				handleUpload(w, req, r, directory)
 			} else {
 				http.NotFound(w, req)
@@ -189,7 +187,7 @@ func requestHandlerConstructor(address string, directory string) func(http.Respo
 	}
 }
 
-func timeoutRequests() {
+func timeoutRequests(readyQueue *Pending) {
 	for {
 		readyQueue.Lock()
 		var newQueue []Response
@@ -208,17 +206,18 @@ func timeoutRequests() {
 }
 
 func startServer(address string, datadir string) error {
-	http.HandleFunc("/", requestHandlerConstructor(address, datadir))
+	var readyQueue Pending
 
-	go timeoutRequests()
+	http.HandleFunc("/", requestHandlerConstructor(address, datadir, &readyQueue))
+	go timeoutRequests(&readyQueue)
 
+	log.Printf("Starting a server on %s, serving the directory %s\n", address, datadir)
 	err := http.ListenAndServe(address, nil)
 	if err != nil {
 		log.Printf("An error has occurred when starting the server")
 		return err
 	}
 
-	log.Printf("Starting a server on %s, serving the directory %s\n", address, datadir)
 	return nil
 }
 
