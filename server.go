@@ -33,12 +33,6 @@ type Pending struct {
 	responses []Response
 }
 
-// These configuration variables will be read from command line flags later
-var (
-	address   = "localhost:3030"
-	directory = "data"
-)
-
 var readyQueue Pending
 
 func writeError(w http.ResponseWriter, code int, message string) {
@@ -57,7 +51,7 @@ func exists(path string) bool {
 	}
 }
 
-func respond(w http.ResponseWriter, req Request) error {
+func respond(w http.ResponseWriter, req Request, address string, directory string) error {
 	if req.Filename == "" && req.Mime == "" {
 		writeError(w, 400, "Either a filename or MIME-type needs to be specified")
 		return errors.New("Neither filename nor MIME-type supplied")
@@ -87,7 +81,7 @@ func respond(w http.ResponseWriter, req Request) error {
 	return nil
 }
 
-func transferRequestHandler(w http.ResponseWriter, req *http.Request) {
+func transferRequestHandler(w http.ResponseWriter, req *http.Request, address string, directory string) {
 	var r Request
 
 	// Need to handle OPTIONS properly
@@ -104,7 +98,7 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	err = respond(w, r)
+	err = respond(w, r, address, directory)
 	if err != nil {
 		log.Println(err)
 	}
@@ -139,7 +133,7 @@ func availableForUpload(filename string) (Response, error) {
 	return Response{}, errors.New("Unapproved upload")
 }
 
-func handleUpload(w http.ResponseWriter, req *http.Request, expected Response) {
+func handleUpload(w http.ResponseWriter, req *http.Request, expected Response, directory string) {
 	if req.Method != "PUT" {
 		w.Header().Add("Allow", "PUT")
 		w.WriteHeader(405)
@@ -180,15 +174,17 @@ func handleUpload(w http.ResponseWriter, req *http.Request, expected Response) {
 	fmt.Fprintf(w, "%s", expected.Url)
 }
 
-func requestHandler(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path == "/" { // root request
-		transferRequestHandler(w, req)
-	} else {
-		filename := req.URL.Path[1:]
-		if r, err := availableForUpload(filename); err == nil {
-			handleUpload(w, req, r)
+func requestHandlerConstructor(address string, directory string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/" { // root request
+			transferRequestHandler(w, req, address, directory)
 		} else {
-			http.NotFound(w, req)
+			filename := req.URL.Path[1:]
+			if r, err := availableForUpload(filename); err == nil {
+				handleUpload(w, req, r, directory)
+			} else {
+				http.NotFound(w, req)
+			}
 		}
 	}
 }
@@ -211,16 +207,21 @@ func timeoutRequests() {
 	}
 }
 
-func main() {
-	fmt.Printf("%s => %s\n", address, directory)
-
-	http.HandleFunc("/", requestHandler)
+func startServer(address string, datadir string) error {
+	http.HandleFunc("/", requestHandlerConstructor(address, datadir))
 
 	go timeoutRequests()
 
 	err := http.ListenAndServe(address, nil)
 	if err != nil {
-		fmt.Printf("Error occured")
+		log.Printf("An error has occurred when starting the server")
+		return err
 	}
 
+	log.Printf("Starting a server on %s, serving the directory %s\n", address, datadir)
+	return nil
+}
+
+func main() {
+	startServer("localhost:3030", "data")
 }
