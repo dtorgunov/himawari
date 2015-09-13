@@ -1,4 +1,4 @@
-package main
+package himawari
 
 import (
 	"encoding/json"
@@ -205,7 +205,7 @@ func timeoutRequests(readyQueue *Pending) {
 	}
 }
 
-func startServer(address string, datadir string) error {
+func StartServer(address string, datadir string) error {
 	var readyQueue Pending
 
 	http.HandleFunc("/", requestHandlerConstructor(address, datadir, &readyQueue))
@@ -219,8 +219,4 @@ func startServer(address string, datadir string) error {
 	}
 
 	return nil
-}
-
-func main() {
-	startServer("localhost:3030", "data")
 }
