@@ -8,10 +8,10 @@ type Request struct {
 	Length   int
 }
 
-// Response is the information needed to process a file upload based
+// PendingUpload is the information needed to process a file upload based
 // on an accepted request.
 // It is also used to generate the JSON response to the user.
-type Response struct {
+type PendingUpload struct {
 	Url      string `json:"url"`
 	Timeout  int    `json:"timeout"`
 	Filename string `json:"filename"`

@@ -33,13 +33,13 @@ import (
 // will wait for a file upload after a request has been accepted.
 const defaultTimeout = 60
 
-// Pending is a wrapper around an array of Responses that have been
+// Pending is a wrapper around an array of PendingUpload that have been
 // accepted, but haven't been uploaded nor timed out.
 // It should be locked when in use, as the timing out routine runs in
 // a separate thread.
 type Pending struct {
 	sync.Mutex
-	responses []Response
+	uploads []PendingUpload
 }
 
 // writeError is a wrapper for reporting errors to the client.
@@ -85,9 +85,9 @@ func respond(w http.ResponseWriter, req Request, address string, directory strin
 	}
 
 	readyQueue.Lock()
-	resp := Response{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: defaultTimeout, Length: req.Length}
+	resp := PendingUpload{Url: fmt.Sprintf("http://%s/%s", address, req.Filename), Filename: req.Filename, Timeout: defaultTimeout, Length: req.Length}
 	json.NewEncoder(w).Encode(resp)
-	readyQueue.responses = append(readyQueue.responses, resp)
+	readyQueue.uploads = append(readyQueue.uploads, resp)
 	readyQueue.Unlock()
 
 	return nil
@@ -121,40 +121,40 @@ func transferRequestHandler(w http.ResponseWriter, req *http.Request, address st
 	w.WriteHeader(204)
 }
 
-// removeRequest removes a given Response from a Pending queue. The
+// removeRequest removes a given PendingUpload from a Pending queue. The
 // caller MUST lock the queue before calling this function.
-func removeRequest(r Response, readyQueue *Pending) {
+func removeRequest(u PendingUpload, readyQueue *Pending) {
 	// assumes readyQueue is Locked by the caller
-	var newQueue []Response
-	for _, r1 := range readyQueue.responses {
-		if r != r1 {
-			newQueue = append(newQueue, r1)
+	var newQueue []PendingUpload
+	for _, u1 := range readyQueue.uploads {
+		if u != u1 {
+			newQueue = append(newQueue, u1)
 		} else {
-			log.Printf("Removing %s from the queue", r.Filename)
+			log.Printf("Removing %s from the queue", u.Filename)
 		}
 	}
-	readyQueue.responses = newQueue
+	readyQueue.uploads = newQueue
 
 }
 
-// availableForUpload extracts a Response for a transfer of a given
+// availableForUpload extracts a PendingUpload for a transfer of a given
 // filename from a Pending queue. Returns an error if a request for
 // such a transfer has not been accepted.
-func availableForUpload(filename string, readyQueue *Pending) (Response, error) {
+func availableForUpload(filename string, readyQueue *Pending) (PendingUpload, error) {
 	readyQueue.Lock()
 	defer readyQueue.Unlock()
-	for _, r := range readyQueue.responses {
-		if r.Filename == filename {
-			removeRequest(r, readyQueue)
-			return r, nil
+	for _, u := range readyQueue.uploads {
+		if u.Filename == filename {
+			removeRequest(u, readyQueue)
+			return u, nil
 		}
 	}
-	return Response{}, errors.New("Unapproved upload")
+	return PendingUpload{}, errors.New("Unapproved upload")
 }
 
 // handleUpload saves the PUT payload to the corresponding location,
 // given that the length of the file is as negotiated.
-func handleUpload(w http.ResponseWriter, req *http.Request, expected Response, directory string) {
+func handleUpload(w http.ResponseWriter, req *http.Request, expected PendingUpload, directory string) {
 	if req.Method != "PUT" {
 		w.Header().Add("Allow", "PUT")
 		w.WriteHeader(405)
@@ -217,16 +217,16 @@ func requestHandlerConstructor(address string, directory string, readyQueue *Pen
 func timeoutRequests(readyQueue *Pending) {
 	for {
 		readyQueue.Lock()
-		var newQueue []Response
-		for _, r := range readyQueue.responses {
-			if r.Timeout > 0 {
-				r.Timeout = r.Timeout - 10
-				newQueue = append(newQueue, r)
+		var newQueue []PendingUpload
+		for _, u := range readyQueue.uploads {
+			if u.Timeout > 0 {
+				u.Timeout = u.Timeout - 10
+				newQueue = append(newQueue, u)
 			} else {
-				log.Printf("Request for %s timed out", r.Filename)
+				log.Printf("Request for %s timed out", u.Filename)
 			}
 		}
-		readyQueue.responses = newQueue
+		readyQueue.uploads = newQueue
 		readyQueue.Unlock()
 		time.Sleep(10 * time.Second)
 	}
