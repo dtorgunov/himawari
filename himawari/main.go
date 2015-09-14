@@ -14,20 +14,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// This package is used to start a basic himawari server
 package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/dtorgunov/himawari"
+	"os"
 )
 
 var (
-	address = flag.String("address", ":3030", "the address to listen on")
-	datadir = flag.String("datadir", "data", "the directory to save the uploaded files to")
+	filename = flag.String("f", "", "the file to upload")
+	server   = flag.String("s", "", "the server to upload it to")
 )
 
 func main() {
 	flag.Parse()
-	himawari.StartServer(*address, *datadir)
+	if (len(*filename) < 1) || (len(*server) < 1) {
+		flag.Usage()
+		os.Exit(1)
+	}
+	s := himawari.SendFile(*filename, *server)
+	fmt.Println(s)
 }

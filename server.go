@@ -1,4 +1,4 @@
-// himawari. A simple file upload handling server.
+// himawari. A simple file upload handling server/client.
 // Copyright (C) 2015 Denis Torgunov
 //
 // This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// Package himawari implements a basic Himawari server.
+// Package himawari implements a basic Himawari server and client.
 package himawari
 
 import (
